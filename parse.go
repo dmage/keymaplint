@@ -163,10 +163,12 @@ func (l *lexer) accept(valid string) bool {
 }
 
 // acceptKeyword consumes the sequence of runes
-func (l *lexer) acceptKeyword(keyword string) bool {
-	if strings.HasPrefix(l.input[l.pos:], keyword) {
-		l.pos += len(keyword)
-		return true
+func (l *lexer) acceptKeyword(keywords ...string) bool {
+	for _, keyword := range keywords {
+		if strings.HasPrefix(l.input[l.pos:], keyword) {
+			l.pos += len(keyword)
+			return true
+		}
 	}
 	return false
 }
@@ -193,56 +195,40 @@ func lexText(l *lexer) stateFn {
 		l.ignore()
 		return lexText
 	case 'i':
-		if l.acceptKeyword("include ") || l.acceptKeyword("include\t") {
+		if l.acceptKeyword("include ", "include\t") {
 			l.emit(itemInclude)
 			return lexInclude
 		}
 	case 'a', 'A':
-		if l.acceptKeyword("alt") ||
-			l.acceptKeyword("Alt") ||
-			l.acceptKeyword("ALT") {
+		if l.acceptKeyword("alt", "Alt", "ALT") {
 			l.emit(itemAlt)
 			return lexText
 		}
-		if l.acceptKeyword("as") ||
-			l.acceptKeyword("As") ||
-			l.acceptKeyword("AS") {
+		if l.acceptKeyword("as", "As", "AS") {
 			l.emit(itemAs)
 			return lexText
 		}
 	case 'c', 'C':
-		if l.acceptKeyword("control") ||
-			l.acceptKeyword("Control") ||
-			l.acceptKeyword("CONTROL") {
+		if l.acceptKeyword("control", "Control", "CONTROL") {
 			l.emit(itemControl)
 			return lexText
 		}
 	case 'k', 'K':
-		if l.acceptKeyword("keymaps") ||
-			l.acceptKeyword("Keymaps") ||
-			l.acceptKeyword("KeyMaps") ||
-			l.acceptKeyword("KEYMAPS") {
+		if l.acceptKeyword("keymaps", "Keymaps", "KeyMaps", "KEYMAPS") {
 			l.emit(itemKeymaps)
 			return lexText
 		}
-		if l.acceptKeyword("keycode") ||
-			l.acceptKeyword("Keycode") ||
-			l.acceptKeyword("KeyCode") ||
-			l.acceptKeyword("KEYCODE") {
+		if l.acceptKeyword("keycode", "Keycode", "KeyCode", "KEYCODE") {
 			l.emit(itemKeycode)
 			return lexText
 		}
 	case 's', 'S':
-		if l.acceptKeyword("strings") ||
-			l.acceptKeyword("Strings") ||
-			l.acceptKeyword("STRINGS") {
+		if l.acceptKeyword("strings", "Strings", "STRINGS") {
 			l.emit(itemStrings)
 			return lexText
 		}
 	case 'u', 'U':
-		if l.acceptKeyword("usual") ||
-			l.acceptKeyword("Usual") ||
-			l.acceptKeyword("USUAL") {
+		if l.acceptKeyword("usual", "Usual", "USUAL") {
 			l.emit(itemUsual)
 			return lexText
 		}
