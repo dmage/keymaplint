@@ -1,5 +1,7 @@
 package token
 
+//go:generate stringer -type=Token
+
 // Token is the set of lexical tokens of kbd keymap language.
 type Token int
 
