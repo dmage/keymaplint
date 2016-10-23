@@ -18,25 +18,37 @@ const (
 	itemDot // the cursor, spelled '.'
 	itemEOF
 	itemComment
-	itemAlt     // alt keyword
-	itemAltGr   // altgr keyword
-	itemAs      // as keyword
-	itemControl // control keyword
-	itemKeycode // keycode keyword
-	itemKeymaps // keymaps keyword
-	itemNumber  // number
-	itemShift   // shift keyword
-	itemShiftL  // shiftl keyword
-	itemShiftR  // shiftr keyword
-	itemStrings // strings keyword
-	itemUsual   // usual keyword
+	itemAlt       // alt keyword
+	itemAltGr     // altgr keyword
+	itemAltIsMeta // alt_is_meta keyword
+	itemAs        // as keyword
+	itemCharset   // charset keyword
+	itemCompose   // compose keyword
+	itemControl   // control keyword
+	itemCtrlL     // ctrll keyword
+	itemCtrlR     // ctrlR keyword
+	itemFor       // for keyword
+	itemKeycode   // keycode keyword
+	itemKeymaps   // keymaps keyword
+	itemNumber    // number
+	itemPlain     // plain keyword
+	itemShift     // shift keyword
+	itemShiftL    // shiftl keyword
+	itemShiftR    // shiftr keyword
+	itemString    // string keyword
+	itemStrings   // strings keyword
+	itemTo        // to keyword
+	itemUsual     // usual keyword
 	itemDash
 	itemComma
 	itemPlus
+	itemEquals
 	itemEol
 	itemInclude
 	itemIncludeString
 	itemLiteral
+	itemStr // quoted string (includes quotes)
+	itemChar
 
 	itemElse       // else keyword
 	itemEnd        // end keyword
@@ -48,7 +60,6 @@ const (
 	itemRange      // range keyword
 	itemRawString  // raw quoted string (includes quotes)
 	itemRightMeta  // right meta-string
-	itemString     // quoted string (includes quotes)
 	itemText       // plain text
 )
 
@@ -212,6 +223,11 @@ func lexText(l *lexer) stateFn {
 			l.emit(itemAltGr)
 			return lexText
 		}
+		// FIXME(dmage): [aA][lL][tT][-_][iI][sS][-_][mM][eE][tT][aA]
+		if l.acceptKeyword("alt_is_meta") {
+			l.emit(itemAltIsMeta)
+			return lexText
+		}
 		if l.acceptKeyword("alt", "Alt", "ALT") {
 			l.emit(itemAlt)
 			return lexText
@@ -221,8 +237,29 @@ func lexText(l *lexer) stateFn {
 			return lexText
 		}
 	case 'c', 'C':
+		if l.acceptKeyword("charset", "Charset", "CharSet", "CHARSET") {
+			l.emit(itemCharset)
+			return lexText
+		}
+		if l.acceptKeyword("compose", "Compose", "COMPOSE") {
+			l.emit(itemCompose)
+			return lexText
+		}
 		if l.acceptKeyword("control", "Control", "CONTROL") {
 			l.emit(itemControl)
+			return lexText
+		}
+		if l.acceptKeyword("ctrll", "CtrlL", "CTRLL") {
+			l.emit(itemCtrlL)
+			return lexText
+		}
+		if l.acceptKeyword("ctrlr", "CtrlR", "CTRLR") {
+			l.emit(itemCtrlR)
+			return lexText
+		}
+	case 'f', 'F':
+		if l.acceptKeyword("for", "For", "FOR") {
+			l.emit(itemFor)
 			return lexText
 		}
 	case 'k', 'K':
@@ -232,6 +269,11 @@ func lexText(l *lexer) stateFn {
 		}
 		if l.acceptKeyword("keycode", "Keycode", "KeyCode", "KEYCODE") {
 			l.emit(itemKeycode)
+			return lexText
+		}
+	case 'p', 'P':
+		if l.acceptKeyword("plain", "Plain", "PLAIN") {
+			l.emit(itemPlain)
 			return lexText
 		}
 	case 's', 'S':
@@ -251,12 +293,32 @@ func lexText(l *lexer) stateFn {
 			l.emit(itemStrings)
 			return lexText
 		}
+		if l.acceptKeyword("string", "String", "STRING") {
+			l.emit(itemString)
+			return lexRValue
+		}
+	case 't', 'T':
+		if l.acceptKeyword("to", "To", "TO") {
+			l.emit(itemTo)
+			return lexRValue
+		}
 	case 'u', 'U':
 		if l.acceptKeyword("usual", "Usual", "USUAL") {
 			l.emit(itemUsual)
 			return lexText
 		}
-	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+	case '0':
+		l.next()
+		if l.peek() == 'x' || l.peek() == 'X' {
+			l.next()
+			l.acceptRun("0123456789abcdefABCDEF")
+			l.emit(itemNumber)
+		} else {
+			l.acceptRun("01234567")
+			l.emit(itemNumber)
+		}
+		return lexText
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		l.acceptRun("0123456789")
 		l.emit(itemNumber)
 		return lexText
@@ -274,7 +336,24 @@ func lexText(l *lexer) stateFn {
 		return lexText
 	case '=':
 		l.next()
+		l.emit(itemEquals)
 		return lexRValue
+	case '"':
+		l.next()
+		return lexString
+	case '\'':
+		l.next()
+		rune := l.next()
+		if rune == '\\' {
+			l.next()
+		}
+		rune = l.next()
+		if rune != '\'' {
+			l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
+			return nil
+		}
+		l.emit(itemChar)
+		return lexText
 	case '\n':
 		l.next()
 		l.emit(itemEol)
@@ -283,7 +362,7 @@ func lexText(l *lexer) stateFn {
 		l.emit(itemEOF) // Useful to make EOF a token.
 		return nil      // Stop the run loop.
 	}
-	l.errorf("unexpected symbol %q", l.peek())
+	l.errorf("unable to parse %.10q...", l.input[l.pos:])
 	return nil
 }
 
@@ -333,6 +412,37 @@ func lexRValue(l *lexer) stateFn {
 		l.emit(itemPlus)
 		return lexRValue
 	}
+	if rune == '#' || rune == '!' {
+		return lexComment
+	}
+	if rune == '=' {
+		l.emit(itemEquals)
+		return lexRValue
+	}
+	if rune == '\\' {
+		if l.peek() == '\n' {
+			// continuation
+			l.next()
+			return lexRValue
+		}
+	}
+	if rune == '\'' {
+		// FIXME(dmage)
+		rune := l.next()
+		if rune == '\\' {
+			l.next()
+		}
+		rune = l.next()
+		if rune != '\'' {
+			l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
+			return nil
+		}
+		l.emit(itemChar)
+		return lexRValue
+	}
+	if rune == '"' {
+		return lexString // FIXME(dmage): return to rvalue
+	}
 	for {
 		// FIXME(dmage): [a-zA-Z][a-zA-Z_0-9]*
 		if 'a' <= rune && rune <= 'z' || 'A' <= rune && rune <= 'Z' || '0' <= rune && rune <= '9' || rune == '_' {
@@ -343,11 +453,32 @@ func lexRValue(l *lexer) stateFn {
 		break
 	}
 	if l.pos == l.start {
-		l.errorf("no rvalue")
+		l.errorf("no rvalue, but found %.10q", l.input[l.pos:])
 		return nil
 	}
 	l.emit(itemLiteral)
 	return lexRValue
+}
+
+func lexString(l *lexer) stateFn {
+	for {
+		rune := l.next()
+		switch rune {
+		case eof:
+			l.errorf("expected '\"', got eof")
+			return nil
+		case '\\':
+			// FIXME(dmage)
+			if l.accept("\"\\03") {
+				continue
+			}
+			l.errorf("unexpected part of string: '\\%c'", l.input[l.pos])
+			return nil
+		case '"':
+			l.emit(itemStr)
+			return lexText
+		}
+	}
 }
 
 func main() {
