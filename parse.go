@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
 	"strings"
 	"unicode/utf8"
 )
@@ -16,11 +19,15 @@ const (
 	itemEOF
 	itemComment
 	itemAlt     // alt keyword
+	itemAltGr   // altgr keyword
 	itemAs      // as keyword
 	itemControl // control keyword
 	itemKeycode // keycode keyword
 	itemKeymaps // keymaps keyword
 	itemNumber  // number
+	itemShift   // shift keyword
+	itemShiftL  // shiftl keyword
+	itemShiftR  // shiftr keyword
 	itemStrings // strings keyword
 	itemUsual   // usual keyword
 	itemDash
@@ -183,6 +190,7 @@ func (l *lexer) acceptRun(valid string) {
 func lexText(l *lexer) stateFn {
 	switch l.peek() {
 	case '#', '!':
+		l.next()
 		return lexComment
 	case '\\':
 		if l.acceptKeyword("\\\n") {
@@ -200,6 +208,10 @@ func lexText(l *lexer) stateFn {
 			return lexInclude
 		}
 	case 'a', 'A':
+		if l.acceptKeyword("altgr", "Altgr", "AltGr", "ALTGR") {
+			l.emit(itemAltGr)
+			return lexText
+		}
 		if l.acceptKeyword("alt", "Alt", "ALT") {
 			l.emit(itemAlt)
 			return lexText
@@ -223,6 +235,18 @@ func lexText(l *lexer) stateFn {
 			return lexText
 		}
 	case 's', 'S':
+		if l.acceptKeyword("shiftl", "ShiftL", "SHIFTL") {
+			l.emit(itemShiftL)
+			return lexText
+		}
+		if l.acceptKeyword("shiftr", "ShiftR", "SHIFTR") {
+			l.emit(itemShiftR)
+			return lexText
+		}
+		if l.acceptKeyword("shift", "Shift", "SHIFT") {
+			l.emit(itemShift)
+			return lexText
+		}
 		if l.acceptKeyword("strings", "Strings", "STRINGS") {
 			l.emit(itemStrings)
 			return lexText
@@ -304,45 +328,50 @@ func lexRValue(l *lexer) stateFn {
 	if l.peek() == '\n' || l.peek() == eof {
 		return lexText
 	}
+	rune := l.next()
+	if rune == '+' {
+		l.emit(itemPlus)
+		return lexRValue
+	}
 	for {
 		// FIXME(dmage): [a-zA-Z][a-zA-Z_0-9]*
-		rune := l.next()
 		if 'a' <= rune && rune <= 'z' || 'A' <= rune && rune <= 'Z' || '0' <= rune && rune <= '9' || rune == '_' {
+			rune = l.next()
 			continue
 		}
 		l.backup()
 		break
+	}
+	if l.pos == l.start {
+		l.errorf("no rvalue")
+		return nil
 	}
 	l.emit(itemLiteral)
 	return lexRValue
 }
 
 func main() {
-	l := lex("data/keymaps/i386/qwerty/ru-cp1251.map", `! Russian CP1251 Cyrillic keyboard.map. "Cyrillic" mode is toggled by
-! Right_Ctrl key and shifted by AltGr key.
-! 4-Mar-98 Andrew Aksyonov andraks@geocities.com
-keymaps 0-4,6,8,10,12
-include "linux-with-alt-and-altgr"
-strings as usual
-
-		keycode   1 =	Escape
-	alt	keycode   1 =	Meta_Escape
-		keycode   2 =	one	exclam		one	exclam
-	alt	keycode   2 =	Meta_one	
-		keycode   3 =	two	at		two	quotedbl
-	control	keycode   3 =	nul	
-	alt	keycode   3 =	Meta_two	
-		keycode   4 =	three	numbersign	three	slash
-	control	keycode   4 =	Escape
-	alt	keycode   4 =	Meta_three`)
-	for {
-		i := l.nextItem()
-		if i.typ == itemEOF {
-			break
+	for _, filename := range os.Args[1:] {
+		f, err := os.Open(filename)
+		if err != nil {
+			log.Fatal(err)
 		}
-		fmt.Println(i)
-		if i.typ == itemError {
-			break
+
+		data, err := ioutil.ReadAll(f)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		l := lex(filename, string(data))
+		for {
+			i := l.nextItem()
+			if i.typ == itemEOF {
+				break
+			}
+			if i.typ == itemError {
+				log.Fatal(i)
+			}
+			fmt.Println(i)
 		}
 	}
 }
