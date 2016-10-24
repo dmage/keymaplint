@@ -405,6 +405,7 @@ func lexRValue(l *lexer) stateFn {
 		return lexString
 	}
 	if rune == 'U' && acceptUNumber(l) {
+		l.emit(token.UNUMBER)
 		return lexRValue
 	}
 	for {
