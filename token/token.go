@@ -7,7 +7,7 @@ type Token int
 
 const (
 	// Special tokens
-	ILLEGAL Token = iota
+	ERROR Token = iota
 	EOL
 	EOF
 	COMMENT
@@ -18,12 +18,14 @@ const (
 	EQUALS
 	LITERAL
 	NUMBER
+	UNUMBER // U+EFFF
 	PLUS
-	STR
+	STR // quoted string (includes quotes)
+	INCLUDE_STR
 
 	// Keywords
 	ALT
-	ALT_GR
+	ALTGR
 	ALT_IS_META
 	AS
 	CHARSET

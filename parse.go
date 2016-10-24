@@ -7,79 +7,18 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
-)
 
-// itemType identifies the type of lex items.
-type itemType int
-
-const (
-	itemError itemType = iota // error occurred;
-	// value is text of error
-	itemDot // the cursor, spelled '.'
-	itemEOF
-	itemComment
-	itemAlt       // alt keyword
-	itemAltGr     // altgr keyword
-	itemAltIsMeta // alt_is_meta keyword
-	itemAs        // as keyword
-	itemCharset   // charset keyword
-	itemCompose   // compose keyword
-	itemControl   // control keyword
-	itemCtrlL     // ctrll keyword
-	itemCtrlR     // ctrlR keyword
-	itemFor       // for keyword
-	itemKeycode   // keycode keyword
-	itemKeymaps   // keymaps keyword
-	itemNumber    // number
-	itemPlain     // plain keyword
-	itemShift     // shift keyword
-	itemShiftL    // shiftl keyword
-	itemShiftR    // shiftr keyword
-	itemString    // string keyword
-	itemStrings   // strings keyword
-	itemTo        // to keyword
-	itemUsual     // usual keyword
-	itemDash
-	itemComma
-	itemPlus
-	itemEquals
-	itemEol
-	itemInclude
-	itemIncludeString
-	itemLiteral
-	itemStr // quoted string (includes quotes)
-	itemChar
-
-	itemElse       // else keyword
-	itemEnd        // end keyword
-	itemField      // identifier, starting with '.'
-	itemIdentifier // identifier
-	itemIf         // if keyword
-	itemLeftMeta   // left meta-string
-	itemPipe       // pipe symbol
-	itemRange      // range keyword
-	itemRawString  // raw quoted string (includes quotes)
-	itemRightMeta  // right meta-string
-	itemText       // plain text
+	"github.com/dmage/keymaplint/token"
 )
 
 // item represents a token returned from the scanner.
 type item struct {
-	typ itemType // Type, such as itemNumber.
-	val string   // Value, such as "23.2".
+	typ token.Token
+	val string
 }
 
 func (i item) String() string {
-	switch i.typ {
-	case itemEOF:
-		return "EOF"
-	case itemError:
-		return i.val
-	}
-	// if len(i.val) > 10 {
-	// 	return fmt.Sprintf("%.10q...", i.val)
-	// }
-	return fmt.Sprintf("%q", i.val)
+	return fmt.Sprintf("%q[%s]", i.val, i.typ)
 }
 
 // stateFn represents the state of the scanner
@@ -117,11 +56,10 @@ func (l *lexer) nextItem() item {
 			l.state = l.state(l)
 		}
 	}
-	panic("unreachable")
 }
 
 // emit passes an item back to the client.
-func (l *lexer) emit(t itemType) {
+func (l *lexer) emit(t token.Token) {
 	l.items <- item{t, l.input[l.start:l.pos]}
 	l.start = l.pos
 }
@@ -131,7 +69,7 @@ func (l *lexer) emit(t itemType) {
 // state, terminating l.run.
 func (l *lexer) errorf(format string, args ...interface{}) stateFn {
 	l.items <- item{
-		itemError,
+		token.ERROR,
 		fmt.Sprintf(format, args...),
 	}
 	return nil
@@ -145,8 +83,7 @@ func (l *lexer) next() (rune rune) {
 		l.width = 0
 		return eof
 	}
-	rune, l.width =
-		utf8.DecodeRuneInString(l.input[l.pos:])
+	rune, l.width = utf8.DecodeRuneInString(l.input[l.pos:])
 	l.pos += l.width
 	return rune
 }
@@ -198,6 +135,23 @@ func (l *lexer) acceptRun(valid string) {
 	l.backup()
 }
 
+func isHexDigit(r rune) bool {
+	return '0' <= r && r <= '9' || 'a' <= r && r <= 'f' || 'A' <= r && r <= 'F'
+}
+
+func emitUNumber(l *lexer) bool {
+	if len(l.input)-l.pos >= 5 &&
+		l.input[l.pos] == '+' &&
+		isHexDigit(rune(l.input[l.pos+1])) &&
+		isHexDigit(rune(l.input[l.pos+2])) &&
+		isHexDigit(rune(l.input[l.pos+3])) &&
+		isHexDigit(rune(l.input[l.pos+4])) {
+		l.pos += 5
+		l.emit(token.UNUMBER)
+	}
+	return true
+}
+
 func lexText(l *lexer) stateFn {
 	switch l.peek() {
 	case '#', '!':
@@ -215,96 +169,103 @@ func lexText(l *lexer) stateFn {
 		return lexText
 	case 'i':
 		if l.acceptKeyword("include ", "include\t") {
-			l.emit(itemInclude)
+			l.emit(token.INCLUDE)
 			return lexInclude
 		}
 	case 'a', 'A':
 		if l.acceptKeyword("altgr", "Altgr", "AltGr", "ALTGR") {
-			l.emit(itemAltGr)
+			l.emit(token.ALTGR)
 			return lexText
 		}
 		// FIXME(dmage): [aA][lL][tT][-_][iI][sS][-_][mM][eE][tT][aA]
 		if l.acceptKeyword("alt_is_meta") {
-			l.emit(itemAltIsMeta)
+			l.emit(token.ALT_IS_META)
 			return lexText
 		}
 		if l.acceptKeyword("alt", "Alt", "ALT") {
-			l.emit(itemAlt)
+			l.emit(token.ALT)
 			return lexText
 		}
 		if l.acceptKeyword("as", "As", "AS") {
-			l.emit(itemAs)
+			l.emit(token.AS)
 			return lexText
 		}
 	case 'c', 'C':
 		if l.acceptKeyword("charset", "Charset", "CharSet", "CHARSET") {
-			l.emit(itemCharset)
+			l.emit(token.CHARSET)
 			return lexText
 		}
 		if l.acceptKeyword("compose", "Compose", "COMPOSE") {
-			l.emit(itemCompose)
+			l.emit(token.COMPOSE)
 			return lexText
 		}
 		if l.acceptKeyword("control", "Control", "CONTROL") {
-			l.emit(itemControl)
+			l.emit(token.CONTROL)
 			return lexText
 		}
 		if l.acceptKeyword("ctrll", "CtrlL", "CTRLL") {
-			l.emit(itemCtrlL)
+			l.emit(token.CTRLL)
 			return lexText
 		}
 		if l.acceptKeyword("ctrlr", "CtrlR", "CTRLR") {
-			l.emit(itemCtrlR)
+			l.emit(token.CTRLR)
 			return lexText
 		}
 	case 'f', 'F':
 		if l.acceptKeyword("for", "For", "FOR") {
-			l.emit(itemFor)
+			l.emit(token.FOR)
 			return lexText
 		}
 	case 'k', 'K':
 		if l.acceptKeyword("keymaps", "Keymaps", "KeyMaps", "KEYMAPS") {
-			l.emit(itemKeymaps)
+			l.emit(token.KEYMAPS)
 			return lexText
 		}
 		if l.acceptKeyword("keycode", "Keycode", "KeyCode", "KEYCODE") {
-			l.emit(itemKeycode)
+			l.emit(token.KEYCODE)
 			return lexText
 		}
 	case 'p', 'P':
 		if l.acceptKeyword("plain", "Plain", "PLAIN") {
-			l.emit(itemPlain)
+			l.emit(token.PLAIN)
 			return lexText
 		}
 	case 's', 'S':
 		if l.acceptKeyword("shiftl", "ShiftL", "SHIFTL") {
-			l.emit(itemShiftL)
+			l.emit(token.SHIFTL)
 			return lexText
 		}
 		if l.acceptKeyword("shiftr", "ShiftR", "SHIFTR") {
-			l.emit(itemShiftR)
+			l.emit(token.SHIFTR)
 			return lexText
 		}
 		if l.acceptKeyword("shift", "Shift", "SHIFT") {
-			l.emit(itemShift)
+			l.emit(token.SHIFT)
 			return lexText
 		}
 		if l.acceptKeyword("strings", "Strings", "STRINGS") {
-			l.emit(itemStrings)
+			l.emit(token.STRINGS)
 			return lexText
 		}
 		if l.acceptKeyword("string", "String", "STRING") {
-			l.emit(itemString)
+			l.emit(token.STRING)
 			return lexRValue
 		}
 	case 't', 'T':
 		if l.acceptKeyword("to", "To", "TO") {
-			l.emit(itemTo)
+			l.emit(token.TO)
 			return lexRValue
 		}
 	case 'u', 'U':
+		if l.peek() == 'U' {
+			l.next()
+			if emitUNumber(l) {
+				return lexRValue
+			}
+			l.backup()
+		}
 		if l.acceptKeyword("usual", "Usual", "USUAL") {
-			l.emit(itemUsual)
+			l.emit(token.USUAL)
 			return lexText
 		}
 	case '0':
@@ -312,31 +273,31 @@ func lexText(l *lexer) stateFn {
 		if l.peek() == 'x' || l.peek() == 'X' {
 			l.next()
 			l.acceptRun("0123456789abcdefABCDEF")
-			l.emit(itemNumber)
+			l.emit(token.NUMBER)
 		} else {
 			l.acceptRun("01234567")
-			l.emit(itemNumber)
+			l.emit(token.NUMBER)
 		}
 		return lexText
 	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		l.acceptRun("0123456789")
-		l.emit(itemNumber)
+		l.emit(token.NUMBER)
 		return lexText
 	case '-':
 		l.next()
-		l.emit(itemDash)
+		l.emit(token.DASH)
 		return lexText
 	case ',':
 		l.next()
-		l.emit(itemComma)
+		l.emit(token.COMMA)
 		return lexText
 	case '+':
 		l.next()
-		l.emit(itemPlus)
+		l.emit(token.PLUS)
 		return lexText
 	case '=':
 		l.next()
-		l.emit(itemEquals)
+		l.emit(token.EQUALS)
 		return lexRValue
 	case '"':
 		l.next()
@@ -349,55 +310,49 @@ func lexText(l *lexer) stateFn {
 		}
 		rune = l.next()
 		if rune != '\'' {
-			l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
-			return nil
+			return l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
 		}
-		l.emit(itemChar)
+		l.emit(token.CHAR)
 		return lexText
 	case '\n':
 		l.next()
-		l.emit(itemEol)
+		l.emit(token.EOL)
 		return lexText
 	case eof:
-		l.emit(itemEOF) // Useful to make EOF a token.
-		return nil      // Stop the run loop.
+		l.emit(token.EOF)
+		return nil
 	}
-	l.errorf("unable to parse %.10q...", l.input[l.pos:])
-	return nil
+	return l.errorf("parse error near %.20q...", l.input[l.pos:])
 }
 
 func lexComment(l *lexer) stateFn {
 	for {
 		rune := l.next()
 		if rune == eof {
-			l.emit(itemComment)
-			l.emit(itemEOF)
-			return nil
+			l.emit(token.COMMENT)
+			return lexText
 		}
 		if rune == '\n' {
-			l.emit(itemComment)
+			l.emit(token.COMMENT)
 			return lexText
 		}
 	}
-	panic("unreachable")
 }
 
 func lexInclude(l *lexer) stateFn {
 	if l.next() != '"' {
-		l.errorf("expected '\"' after include")
-		return nil
+		return l.errorf("expected '\"' after include")
 	}
 	for {
 		rune := l.next()
 		if rune == eof {
-			l.errorf("expected '\"', got eof")
-			return nil
+			return l.errorf("expected '\"', got eof")
 		}
 		if rune == '"' {
 			break
 		}
 	}
-	l.emit(itemIncludeString)
+	l.emit(token.INCLUDE_STR)
 	return lexText
 }
 
@@ -409,14 +364,14 @@ func lexRValue(l *lexer) stateFn {
 	}
 	rune := l.next()
 	if rune == '+' {
-		l.emit(itemPlus)
+		l.emit(token.PLUS)
 		return lexRValue
 	}
 	if rune == '#' || rune == '!' {
 		return lexComment
 	}
 	if rune == '=' {
-		l.emit(itemEquals)
+		l.emit(token.EQUALS)
 		return lexRValue
 	}
 	if rune == '\\' {
@@ -428,20 +383,24 @@ func lexRValue(l *lexer) stateFn {
 	}
 	if rune == '\'' {
 		// FIXME(dmage)
-		rune := l.next()
+		rune = l.next()
 		if rune == '\\' {
 			l.next()
 		}
 		rune = l.next()
 		if rune != '\'' {
-			l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
-			return nil
+			return l.errorf("expected '.', got %.10q", l.input[l.start:l.pos+1])
 		}
-		l.emit(itemChar)
+		l.emit(token.CHAR)
 		return lexRValue
 	}
 	if rune == '"' {
 		return lexString // FIXME(dmage): return to rvalue
+	}
+	if rune == 'U' {
+		if emitUNumber(l) {
+			return lexRValue
+		}
 	}
 	for {
 		// FIXME(dmage): [a-zA-Z][a-zA-Z_0-9]*
@@ -453,10 +412,9 @@ func lexRValue(l *lexer) stateFn {
 		break
 	}
 	if l.pos == l.start {
-		l.errorf("no rvalue, but found %.10q", l.input[l.pos:])
-		return nil
+		return l.errorf("no rvalue, but found %.10q", l.input[l.pos:])
 	}
-	l.emit(itemLiteral)
+	l.emit(token.LITERAL)
 	return lexRValue
 }
 
@@ -465,17 +423,15 @@ func lexString(l *lexer) stateFn {
 		rune := l.next()
 		switch rune {
 		case eof:
-			l.errorf("expected '\"', got eof")
-			return nil
+			return l.errorf("expected '\"', got eof")
 		case '\\':
 			// FIXME(dmage)
 			if l.accept("\"\\03") {
 				continue
 			}
-			l.errorf("unexpected part of string: '\\%c'", l.input[l.pos])
-			return nil
+			return l.errorf("unexpected part of string: '\\%c'", l.input[l.pos])
 		case '"':
-			l.emit(itemStr)
+			l.emit(token.STR)
 			return lexText
 		}
 	}
@@ -494,15 +450,27 @@ func main() {
 		}
 
 		l := lex(filename, string(data))
+		sep := ""
 		for {
 			i := l.nextItem()
-			if i.typ == itemEOF {
+			if i.typ == token.EOF {
 				break
 			}
-			if i.typ == itemError {
-				log.Fatal(i)
+			if i.typ == token.ERROR {
+				if sep != "" {
+					fmt.Println()
+				}
+				log.Fatal(i.val)
 			}
-			fmt.Println(i)
+			fmt.Print(sep, i)
+			if i.typ == token.EOL || i.typ == token.COMMENT {
+				sep = "\n"
+			} else {
+				sep = " "
+			}
+		}
+		if sep != "" {
+			fmt.Println()
 		}
 	}
 }
