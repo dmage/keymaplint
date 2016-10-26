@@ -25,7 +25,7 @@ func main() {
 		l := scanner.New(filename, string(data))
 		sep := ""
 		for {
-			typ, val := l.Scan()
+			pos, typ, val := l.Scan()
 			if typ == token.EOF {
 				break
 			}
@@ -35,7 +35,7 @@ func main() {
 				}
 				log.Fatal(val)
 			}
-			fmt.Printf("%s%q[%s]", sep, val, typ)
+			fmt.Printf("%s%q[%s:%s]", sep, val, pos, typ)
 			if typ == token.EOL || typ == token.COMMENT {
 				sep = "\n"
 			} else {

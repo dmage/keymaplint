@@ -8,8 +8,19 @@ import (
 	"github.com/dmage/keymaplint/token"
 )
 
+// Position describes the line and column location.
+type Position struct {
+	Line   int // line number, starting at 1
+	Column int // column number, starting at 1 (byte count)
+}
+
+func (p Position) String() string {
+	return fmt.Sprintf("%d:%d", p.Line, p.Column)
+}
+
 // item represents a token returned from the scanner.
 type item struct {
+	pos Position
 	typ token.Token
 	val string
 }
@@ -20,40 +31,52 @@ type stateFn func(*Scanner) stateFn
 
 // Scanner holds the state of the scanner.
 type Scanner struct {
-	name  string    // used only for error reports.
-	input string    // the string being scanned.
-	state stateFn   //
-	start int       // start position of this item.
-	pos   int       // current position in the input.
-	width int       // width of last rune read from input.
-	items chan item // channel of scanned items.
+	name      string    // used only for error reports.
+	input     string    // the string being scanned.
+	state     stateFn   //
+	lineNo    int       // current line number.
+	lineStart int       // start position of current line.
+	start     int       // start position of this item.
+	pos       int       // current position in the input.
+	width     int       // width of last rune read from input.
+	items     chan item // channel of scanned items.
 }
 
 func New(name, input string) *Scanner {
 	l := &Scanner{
-		name:  name,
-		input: input,
-		state: lexText,
-		items: make(chan item, 2), // two items sufficient.
+		name:   name,
+		input:  input,
+		state:  lexText,
+		lineNo: 1,
+		items:  make(chan item, 2), // two items sufficient.
 	}
 	return l
 }
 
 // Scan returns the next item from the input.
-func (l *Scanner) Scan() (token.Token, string) {
+func (l *Scanner) Scan() (Position, token.Token, string) {
 	for {
 		select {
 		case it := <-l.items:
-			return it.typ, it.val
+			return it.pos, it.typ, it.val
 		default:
 			l.state = l.state(l)
 		}
 	}
 }
 
+func (l *Scanner) position() Position {
+	return Position{Line: l.lineNo, Column: l.start - l.lineStart + 1}
+}
+
+func (l *Scanner) nextLine() {
+	l.lineNo++
+	l.lineStart = l.start
+}
+
 // emit passes an item back to the client.
 func (l *Scanner) emit(t token.Token) {
-	l.items <- item{t, l.input[l.start:l.pos]}
+	l.items <- item{l.position(), t, l.input[l.start:l.pos]}
 	l.start = l.pos
 }
 
@@ -62,6 +85,7 @@ func (l *Scanner) emit(t token.Token) {
 // state, terminating l.run.
 func (l *Scanner) errorf(format string, args ...interface{}) stateFn {
 	l.items <- item{
+		l.position(),
 		token.ERROR,
 		fmt.Sprintf(format, args...),
 	}
@@ -171,6 +195,7 @@ func lexText(l *Scanner) stateFn {
 		if l.acceptKeyword("\\\n") {
 			// continuation
 			l.ignore()
+			l.nextLine()
 			return lexText
 		}
 	case ' ', '\t':
@@ -322,6 +347,7 @@ func lexText(l *Scanner) stateFn {
 		return lexText
 	case '\n':
 		l.emit(token.EOL)
+		l.nextLine()
 		return lexText
 	case eof:
 		l.emit(token.EOF)
@@ -339,6 +365,7 @@ func lexComment(l *Scanner) stateFn {
 		}
 		if rune == '\n' {
 			l.emit(token.COMMENT)
+			l.nextLine()
 			return lexText
 		}
 	}
@@ -384,6 +411,8 @@ func lexRValue(l *Scanner) stateFn {
 		if l.peek() == '\n' {
 			// continuation
 			l.next()
+			l.ignore()
+			l.nextLine()
 			return lexRValue
 		}
 	}
